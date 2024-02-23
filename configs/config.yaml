@@ -1,0 +1,8 @@
+webapi:
+  port: 8000
+proxy:
+  port: 8080
+  certs_gen_script: scripts/gen_cert.sh 
+  certs_dir: certs
+  key_file: cert.key
+  cert_file: nck.crt
