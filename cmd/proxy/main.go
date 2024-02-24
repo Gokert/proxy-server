@@ -17,7 +17,13 @@ func main() {
 
 	logger := loggerSingleton.GetLogger()
 
-	srv := server.New(srvCfg, tlsCfg, logger)
+	redisCfg, err := config.ReadRedisConfig()
+	if err != nil {
+		logger.Println(err)
+		return
+	}
+
+	srv := server.New(&srvCfg, &tlsCfg, redisCfg, logger)
 	if err := srv.ListenAndServe(); err != nil {
 		logger.Fatalln(err.Error())
 	}

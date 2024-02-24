@@ -1,9 +1,8 @@
 package logger
 
 import (
-	"sync"
-
 	"github.com/sirupsen/logrus"
+	"sync"
 )
 
 type Singleton struct {

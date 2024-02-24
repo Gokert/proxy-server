@@ -1,6 +1,7 @@
 package config
 
 import (
+	"gopkg.in/yaml.v2"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,6 +13,20 @@ import (
 type HTTPSrvConfig struct {
 	Port string
 	Host string
+}
+
+type TlsConfig struct {
+	Script   string
+	CertsDir string
+	KeyFile  string
+	CertFile string
+}
+
+type DbRedisCfg struct {
+	Host     string `yaml:"host"`
+	Password string `yaml:"password"`
+	DbNumber int    `yaml:"db"`
+	Timer    int    `yaml:"timer"`
 }
 
 func GetHTTPSrvConfig(cfgPath string) HTTPSrvConfig {
@@ -27,13 +42,6 @@ func GetHTTPSrvConfig(cfgPath string) HTTPSrvConfig {
 		Port: v.GetString("proxy.port"),
 		Host: v.GetString("proxy.host"),
 	}
-}
-
-type TlsConfig struct {
-	Script   string
-	CertsDir string
-	KeyFile  string
-	CertFile string
 }
 
 func GetTlsConfig(cfgPath string) TlsConfig {
@@ -58,4 +66,21 @@ func GetTlsConfig(cfgPath string) TlsConfig {
 		KeyFile:  filepath.Join(currDir, certsDirRelPath, v.GetString("proxy.key_file")),
 		CertFile: filepath.Join(currDir, certsDirRelPath, v.GetString("proxy.cert_file")),
 	}
+}
+
+func ReadRedisConfig() (*DbRedisCfg, error) {
+	requsetConfig := DbRedisCfg{}
+	requestFile, err := os.ReadFile("configs/redis_server.yaml")
+
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+
+	err = yaml.Unmarshal(requestFile, &requsetConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	return &requsetConfig, nil
 }

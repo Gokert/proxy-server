@@ -4,9 +4,10 @@ import (
 	"bufio"
 	"crypto/tls"
 	"http-proxy-server/internal/app/proxy/config"
+	"http-proxy-server/internal/app/proxy/repository"
+	"http-proxy-server/internal/pkg/models"
 	"http-proxy-server/internal/pkg/mw"
 	"io"
-	"log"
 	"net/http"
 	"net/http/httputil"
 	"os/exec"
@@ -16,16 +17,24 @@ import (
 )
 
 type ProxyServer struct {
-	tlsCfg config.TlsConfig
-	srvCfg config.HTTPSrvConfig
-	logger *logrus.Logger
+	tlsCfg   *config.TlsConfig
+	srvCfg   *config.HTTPSrvConfig
+	requests *repository.RequestRepo
+	logger   *logrus.Logger
 }
 
-func New(srvCfg config.HTTPSrvConfig, tlsCfg config.TlsConfig, logger *logrus.Logger) *ProxyServer {
+func New(srvCfg *config.HTTPSrvConfig, tlsCfg *config.TlsConfig, rdsCfg *config.DbRedisCfg, logger *logrus.Logger) *ProxyServer {
+	requests, err := repository.GetRequestRepo(rdsCfg, logger)
+	if err != nil {
+		logger.Error("Request repository is not responding")
+		return nil
+	}
+
 	return &ProxyServer{
-		srvCfg: srvCfg,
-		tlsCfg: tlsCfg,
-		logger: logger,
+		srvCfg:   srvCfg,
+		tlsCfg:   tlsCfg,
+		requests: requests,
+		logger:   logger,
 	}
 }
 
@@ -71,16 +80,41 @@ func (ps ProxyServer) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	defer res.Body.Close()
-
 	res.Cookies()
+
 	for key, values := range res.Header {
 		for _, value := range values {
 			w.Header().Add(key, value)
 		}
 	}
 
+	bodyResponse, err := io.ReadAll(res.Body)
+	if err != nil {
+		ps.logger.WithField("reqID", reqID).Errorln("round trip failed:", err.Error())
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+	}
+
+	_, err = ps.SetResponseInfo(res, r, string(bodyResponse))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	bodyRequest, err := io.ReadAll(r.Body)
+	if err != nil {
+		ps.logger.WithField("reqID", reqID).Errorln("round trip failed:", err.Error())
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+	}
+
+	_, err = ps.SetRequestInfo(r, string(bodyRequest))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	w.WriteHeader(res.StatusCode)
-	if _, err := io.Copy(w, res.Body); err != nil {
+	_, err = w.Write(bodyResponse)
+	if err != nil {
 		ps.logger.WithField("reqID", reqID).Errorln("io copy failed:", err.Error())
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -166,8 +200,31 @@ func (ps ProxyServer) proxyHTTPS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Println("GERGREGRDTRT", response.Cookies())
 	rawResponse, err := httputil.DumpResponse(response, true)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	bodyResponse, err := io.ReadAll(response.Body)
+	if err != nil {
+		ps.logger.WithField("reqID", reqID).Errorln("round trip failed:", err.Error())
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+	}
+
+	_, err = ps.SetResponseInfo(response, r, string(bodyResponse))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	bodyRequest, err := io.ReadAll(r.Body)
+	if err != nil {
+		ps.logger.WithField("reqID", reqID).Errorln("round trip failed:", err.Error())
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+	}
+
+	_, err = ps.SetRequestInfo(r, string(bodyRequest))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -203,4 +260,42 @@ func (ps ProxyServer) hostTLSConfig(host string) (*tls.Config, error) {
 	return &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 	}, nil
+}
+
+func (ps ProxyServer) SetRequestInfo(request *http.Request, body string) (bool, error) {
+	requestInfo := &models.RequestInfo{
+		Addr:       request.RemoteAddr,
+		Method:     request.Method,
+		Path:       request.URL.String(),
+		GetParams:  "",
+		Headers:    request.Header,
+		Cookies:    request.Cookies(),
+		PostParams: body,
+	}
+
+	_, err := ps.requests.SetRequestInfo(request.Context(), requestInfo, ps.logger)
+	if err != nil {
+		ps.logger.Println("Set error: ", err.Error())
+		return false, err
+	}
+
+	return true, nil
+}
+
+func (ps ProxyServer) SetResponseInfo(response *http.Response, request *http.Request, body string) (bool, error) {
+	responseInfo := &models.ResponseInfo{
+		Addr:    request.RemoteAddr,
+		Status:  response.Status,
+		Headers: response.Header,
+		Cookies: response.Cookies(),
+		Body:    body,
+	}
+
+	_, err := ps.requests.SetResponseInfo(request.Context(), responseInfo, ps.logger)
+	if err != nil {
+		ps.logger.Println("Set error: ", err.Error())
+		return false, err
+	}
+
+	return true, nil
 }
