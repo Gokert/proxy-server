@@ -1,4 +1,0 @@
-addr: "localhost:6379"
-password: ""
-db: 1
-timer: 15

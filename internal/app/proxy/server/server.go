@@ -3,10 +3,12 @@ package server
 import (
 	"bufio"
 	"crypto/tls"
-	"http-proxy-server/internal/app/proxy/config"
-	"http-proxy-server/internal/app/proxy/repository"
-	"http-proxy-server/internal/pkg/models"
-	"http-proxy-server/internal/pkg/mw"
+	"http-proxy-server/configs"
+	mw2 "http-proxy-server/internal/app/proxy/pkg/mw"
+	"http-proxy-server/internal/app/server/pkg/models"
+	repo "http-proxy-server/internal/app/server/repository"
+	"http-proxy-server/internal/app/server/usecase"
+	//"http-proxy-server/internal/app/proxy/repository"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -17,40 +19,42 @@ import (
 )
 
 type ProxyServer struct {
-	tlsCfg   *config.TlsConfig
-	srvCfg   *config.HTTPSrvConfig
-	requests *repository.RequestRepo
-	logger   *logrus.Logger
+	requestUseCase usecase.IUseCase
+	tlsCfg         *configs.TlsConfig
+	srvCfg         *configs.HTTPSrvConfig
+	requests       *repo.PostgresRepository
+	logger         *logrus.Logger
 }
 
-func New(srvCfg *config.HTTPSrvConfig, tlsCfg *config.TlsConfig, rdsCfg *config.DbRedisCfg, logger *logrus.Logger) *ProxyServer {
-	requests, err := repository.GetRequestRepo(rdsCfg, logger)
+func New(srvCfg *configs.HTTPSrvConfig, tlsCfg *configs.TlsConfig, psxCfg *configs.WebConfig, requestUseCase usecase.IUseCase, logger *logrus.Logger) *ProxyServer {
+	requests, err := repo.GetUserRepo(psxCfg, logger)
 	if err != nil {
 		logger.Error("Request repository is not responding")
 		return nil
 	}
 
 	return &ProxyServer{
-		srvCfg:   srvCfg,
-		tlsCfg:   tlsCfg,
-		requests: requests,
-		logger:   logger,
+		requestUseCase: requestUseCase,
+		srvCfg:         srvCfg,
+		tlsCfg:         tlsCfg,
+		requests:       requests,
+		logger:         logger,
 	}
 }
 
 func (ps ProxyServer) setMiddleware(handleFunc http.HandlerFunc) http.Handler {
-	h := mw.AccessLog(ps.logger, http.HandlerFunc(handleFunc))
-	return mw.RequestID(h)
+	h := mw2.AccessLog(ps.logger, http.HandlerFunc(handleFunc))
+	return mw2.RequestID(h)
 }
 
 func (ps ProxyServer) getRouter() http.Handler {
 	router := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodConnect {
-			ps.proxyHTTPS(w, r)
+			ps.ProxyHTTPS(w, r)
 			return
 		}
 
-		ps.proxyHTTP(w, r)
+		ps.ProxyHTTP(w, r)
 	})
 
 	return ps.setMiddleware(router)
@@ -58,16 +62,16 @@ func (ps ProxyServer) getRouter() http.Handler {
 
 func (ps ProxyServer) ListenAndServe() error {
 	server := http.Server{
-		Addr:    ps.srvCfg.Host + ":" + ps.srvCfg.Port,
+		Addr:    ps.srvCfg.ProxyHost + ":" + ps.srvCfg.ProxyPort,
 		Handler: ps.getRouter(),
 	}
 
-	ps.logger.Infof("start listening at %s:%s", ps.srvCfg.Host, ps.srvCfg.Port)
+	ps.logger.Infof("start proxy-server listening at %s:%s", ps.srvCfg.ProxyHost, ps.srvCfg.ProxyPort)
 	return server.ListenAndServe()
 }
 
-func (ps ProxyServer) proxyHTTP(w http.ResponseWriter, r *http.Request) {
-	reqID := mw.GetRequestID(r.Context())
+func (ps ProxyServer) ProxyHTTP(w http.ResponseWriter, r *http.Request) {
+	reqID := mw2.GetRequestID(r.Context())
 	ps.logger.WithField("reqID", reqID).Infoln("entered in proxyHTTP")
 
 	r.Header.Del("Proxy-Connection")
@@ -94,22 +98,40 @@ func (ps ProxyServer) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 	}
 
-	_, err = ps.SetResponseInfo(res, r, string(bodyResponse))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	bodyRequest, err := io.ReadAll(r.Body)
 	if err != nil {
 		ps.logger.WithField("reqID", reqID).Errorln("round trip failed:", err.Error())
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 	}
 
-	_, err = ps.SetRequestInfo(r, string(bodyRequest))
+	ps.logger.Println(reqID)
+
+	request := &models.Request{
+		Method:  r.Method,
+		Scheme:  "http",
+		Host:    r.Host,
+		Path:    r.URL.Path,
+		Headers: r.Header,
+		Params:  r.URL.Query(),
+		Body:    string(bodyRequest),
+	}
+
+	err = ps.requestUseCase.SaveRequest(request)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		ps.logger.WithField("reqID", reqID).Errorln("SaveRequest error: ", err.Error())
+	}
+
+	response := &models.Response{
+		RequestId: request.Id,
+		Code:      res.StatusCode,
+		Message:   res.Status,
+		Headers:   res.Header,
+		Body:      string(bodyResponse),
+	}
+
+	err = ps.requestUseCase.SaveResponse(response)
+	if err != nil {
+		ps.logger.WithField("reqID", reqID).Errorln("SaveResponse error: ", err.Error())
 	}
 
 	w.WriteHeader(res.StatusCode)
@@ -123,8 +145,8 @@ func (ps ProxyServer) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	ps.logger.WithField("reqID", reqID).Infoln("exited from proxyHTTP")
 }
 
-func (ps ProxyServer) proxyHTTPS(w http.ResponseWriter, r *http.Request) {
-	reqID := mw.GetRequestID(r.Context())
+func (ps ProxyServer) ProxyHTTPS(w http.ResponseWriter, r *http.Request) {
+	reqID := mw2.GetRequestID(r.Context())
 	ps.logger.WithField("reqID", reqID).Infoln("entered in proxyHTTPS")
 
 	hijacker, ok := w.(http.Hijacker)
@@ -206,29 +228,33 @@ func (ps ProxyServer) proxyHTTPS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bodyResponse, err := io.ReadAll(response.Body)
-	if err != nil {
-		ps.logger.WithField("reqID", reqID).Errorln("round trip failed:", err.Error())
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-	}
-
-	_, err = ps.SetResponseInfo(response, r, string(bodyResponse))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	bodyRequest, err := io.ReadAll(r.Body)
-	if err != nil {
-		ps.logger.WithField("reqID", reqID).Errorln("round trip failed:", err.Error())
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-	}
-
-	_, err = ps.SetRequestInfo(r, string(bodyRequest))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	//requestInfo := &models.Request{
+	//	Method:  r.Method,
+	//	Scheme:  "https",
+	//	Host:    r.Host,
+	//	Path:    r.URL.Path,
+	//	Headers: r.Header,
+	//	Params:  r.URL.Query(),
+	//	Body:    string(requestByte),
+	//}
+	//
+	//err = ps.requestUseCase.SaveRequest(requestInfo)
+	//if err != nil {
+	//	ps.logger.WithField("reqID", reqID).Errorln("SaveRequest error: ", err.Error())
+	//}
+	//
+	//responseInfo := &models.Response{
+	//	RequestId: requestInfo.Id,
+	//	Code:      response.StatusCode,
+	//	Message:   response.Status,
+	//	Headers:   response.Header,
+	//	Body:      string(rawResponse),
+	//}
+	//
+	//err = ps.requestUseCase.SaveResponse(responseInfo)
+	//if err != nil {
+	//	ps.logger.WithField("reqID", reqID).Errorln("SaveResponse error: ", err.Error())
+	//}
 
 	_, err = tlsLocalConn.Write(rawResponse)
 	if err != nil {
@@ -260,42 +286,4 @@ func (ps ProxyServer) hostTLSConfig(host string) (*tls.Config, error) {
 	return &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 	}, nil
-}
-
-func (ps ProxyServer) SetRequestInfo(request *http.Request, body string) (bool, error) {
-	requestInfo := &models.RequestInfo{
-		Addr:       request.RemoteAddr,
-		Method:     request.Method,
-		Path:       request.URL.String(),
-		GetParams:  "",
-		Headers:    request.Header,
-		Cookies:    request.Cookies(),
-		PostParams: body,
-	}
-
-	_, err := ps.requests.SetRequestInfo(request.Context(), requestInfo, ps.logger)
-	if err != nil {
-		ps.logger.Println("Set error: ", err.Error())
-		return false, err
-	}
-
-	return true, nil
-}
-
-func (ps ProxyServer) SetResponseInfo(response *http.Response, request *http.Request, body string) (bool, error) {
-	responseInfo := &models.ResponseInfo{
-		Addr:    request.RemoteAddr,
-		Status:  response.Status,
-		Headers: response.Header,
-		Cookies: response.Cookies(),
-		Body:    body,
-	}
-
-	_, err := ps.requests.SetResponseInfo(request.Context(), responseInfo, ps.logger)
-	if err != nil {
-		ps.logger.Println("Set error: ", err.Error())
-		return false, err
-	}
-
-	return true, nil
 }

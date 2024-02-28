@@ -1,7 +1,6 @@
-package config
+package configs
 
 import (
-	"gopkg.in/yaml.v2"
 	"log"
 	"os"
 	"path/filepath"
@@ -11,8 +10,19 @@ import (
 )
 
 type HTTPSrvConfig struct {
-	Port string
-	Host string
+	ProxyPort string
+	ProxyHost string
+	WebPort   string
+	WebHost   string
+}
+
+type WebConfig struct {
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+	Dbname   string `yaml:"dbname"`
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Sslmode  string `yaml:"sslmode"`
 }
 
 type TlsConfig struct {
@@ -39,8 +49,29 @@ func GetHTTPSrvConfig(cfgPath string) HTTPSrvConfig {
 	}
 
 	return HTTPSrvConfig{
-		Port: v.GetString("proxy.port"),
-		Host: v.GetString("proxy.host"),
+		ProxyPort: v.GetString("proxy.port"),
+		ProxyHost: v.GetString("proxy.host"),
+		WebPort:   v.GetString("webapi.port"),
+		WebHost:   v.GetString("proxy.host"),
+	}
+}
+
+func GetWebSrvConfig(cfgPath string) WebConfig {
+	v := viper.GetViper()
+	v.SetConfigFile(cfgPath)
+	v.SetConfigType(strings.TrimPrefix(filepath.Ext(cfgPath), "."))
+
+	if err := viper.ReadInConfig(); err != nil {
+		log.Fatal(err)
+	}
+
+	return WebConfig{
+		User:     v.GetString("user"),
+		Password: v.GetString("password"),
+		Dbname:   v.GetString("dbname"),
+		Host:     v.GetString("host"),
+		Port:     v.GetInt("port"),
+		Sslmode:  v.GetString("sslmode"),
 	}
 }
 
@@ -66,21 +97,4 @@ func GetTlsConfig(cfgPath string) TlsConfig {
 		KeyFile:  filepath.Join(currDir, certsDirRelPath, v.GetString("proxy.key_file")),
 		CertFile: filepath.Join(currDir, certsDirRelPath, v.GetString("proxy.cert_file")),
 	}
-}
-
-func ReadRedisConfig() (*DbRedisCfg, error) {
-	requsetConfig := DbRedisCfg{}
-	requestFile, err := os.ReadFile("configs/redis_server.yaml")
-
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-
-	err = yaml.Unmarshal(requestFile, &requsetConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	return &requsetConfig, nil
 }
