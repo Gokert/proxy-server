@@ -228,33 +228,33 @@ func (ps ProxyServer) ProxyHTTPS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//requestInfo := &models.Request{
-	//	Method:  r.Method,
-	//	Scheme:  "https",
-	//	Host:    r.Host,
-	//	Path:    r.URL.Path,
-	//	Headers: r.Header,
-	//	Params:  r.URL.Query(),
-	//	Body:    string(requestByte),
-	//}
-	//
-	//err = ps.requestUseCase.SaveRequest(requestInfo)
-	//if err != nil {
-	//	ps.logger.WithField("reqID", reqID).Errorln("SaveRequest error: ", err.Error())
-	//}
-	//
-	//responseInfo := &models.Response{
-	//	RequestId: requestInfo.Id,
-	//	Code:      response.StatusCode,
-	//	Message:   response.Status,
-	//	Headers:   response.Header,
-	//	Body:      string(rawResponse),
-	//}
-	//
-	//err = ps.requestUseCase.SaveResponse(responseInfo)
-	//if err != nil {
-	//	ps.logger.WithField("reqID", reqID).Errorln("SaveResponse error: ", err.Error())
-	//}
+	requestInfo := &models.Request{
+		Method:  r.Method,
+		Scheme:  "https",
+		Host:    r.Host,
+		Path:    r.URL.Path,
+		Headers: r.Header,
+		Params:  r.URL.Query(),
+		Body:    string(requestByte),
+	}
+
+	err = ps.requestUseCase.SaveRequest(requestInfo)
+	if err != nil {
+		ps.logger.WithField("reqID", reqID).Errorln("SaveRequest error: ", err.Error())
+	}
+
+	responseInfo := &models.Response{
+		RequestId: requestInfo.Id,
+		Code:      response.StatusCode,
+		Message:   response.Status,
+		Headers:   response.Header,
+		Body:      string(rawResponse),
+	}
+
+	err = ps.requestUseCase.SaveResponse(responseInfo)
+	if err != nil {
+		ps.logger.WithField("reqID", reqID).Errorln("SaveResponse error: ", err.Error())
+	}
 
 	_, err = tlsLocalConn.Write(rawResponse)
 	if err != nil {

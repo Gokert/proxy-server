@@ -20,8 +20,7 @@ RUN service postgresql start && \
         psql -c "CREATE USER admin WITH superuser login password 'admin';" && \
         psql -c "ALTER ROLE admin WITH PASSWORD 'admin';" && \
         createdb -O admin vk && \
-        psql -f ./opt/scripts/sql/init_db.sql -d vk && \
-        service postgresql stop
+        psql -f ./opt/scripts/sql/init_db.sql -d vk
 
 VOLUME ["/etc/postgresql", "/var/log/postgresql", "/var/lib/postgresql"]
 
@@ -45,7 +44,7 @@ ENV DB_NAME=Requests
 #RUN ["chmod", "777", "/opt/scripts/gen_cert.sh"]
 #RUN ["chmod", "777", "/opt/scripts/install_ca.sh"]
 
-RUN #bash  "/opt/scripts/gen_ca.sh" && \
+#RUN bash  "/opt/scripts/gen_ca.sh" && \
 #    bash "/opt/scripts/gen_cert.sh" && \
 #    bash "/opt/scripts/install_ca.sh"
 
