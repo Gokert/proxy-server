@@ -1,9 +1,8 @@
 package logger
 
 import (
-	"sync"
-
 	"github.com/sirupsen/logrus"
+	"sync"
 )
 
 type Singleton struct {
@@ -15,7 +14,6 @@ func (s *Singleton) GetLogger() *logrus.Logger {
 	s.once.Do(func() {
 		s.instance = logrus.New()
 		s.instance.SetLevel(logrus.InfoLevel)
-		// s.instance.Formatter = &logrus.JSONFormatter{}
 		s.instance.Infoln("logrus initialized")
 	})
 

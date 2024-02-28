@@ -1,0 +1,6 @@
+user: "admin"
+password: "admin"
+dbname: "vk"
+host: "127.0.0.1"
+port: 5432
+sslmode: "disable"
