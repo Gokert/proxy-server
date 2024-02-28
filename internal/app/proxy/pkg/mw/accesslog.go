@@ -1,10 +1,9 @@
 package mw
 
 import (
+	"github.com/sirupsen/logrus"
 	"net/http"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 func AccessLog(logger *logrus.Logger, next http.Handler) http.Handler {
